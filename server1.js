@@ -8,15 +8,25 @@ const fastifyJwt = require('@fastify/jwt');
 const fastifyMultipart = require('@fastify/multipart');
 const xlsx = require('xlsx');
 const { prependListener } = require('process');
+const fastifyView = require('@fastify/view');
+const { cp } = require('fs');
 
 
 dotenv.config();
 
 //schema for mongodb
-const sectionSchema = new mongoose.Schema({
+const templateSchema = new mongoose.Schema({
+  category: String,
   template_name: String,
-  data: Map,
 });
+
+const sectionSchema = new mongoose.Schema({
+  template: templateSchema,
+  data: Map,
+  order:Number
+
+});
+
 
 const themeSchema = new mongoose.Schema({
   colors: Map,
@@ -34,10 +44,27 @@ const companySchema = new mongoose.Schema({
 });
 
 const Company = mongoose.model('Company', companySchema);
+const Theme = mongoose.model('Theme', themeSchema);
+const Section = mongoose.model('Section', sectionSchema);
+const Template = mongoose.model('Template', templateSchema);
 
+async function main(){
+  // const temp =  await Template.create([{category:'header',template_name:'header1'},{category:'footer',template_name:'footer1'},]);
+  // const header = await Template.findById('66aa16dd903f9a624b148647');
+  // const footer = await Template.findById('66aa16f9db57a2fbe5446a9e');
+  // await Company.create([{name:'XYZ',address:'Baneshwor',phone:"999999",logo:"image.png",slug:"xyz",theme:{colors:{},fonts:{}},sections:[{
+  //     template:header,data:{
+  //       text:"Footer copyright"
+  //     }
+  // },{
+  //   template:footer,data:{
+  //     text:"Footer copyright"
+  //   }
+  // }]}]);
+}
 //for connecting in mongodb server
 mongoose.connect('mongodb://localhost:27017/dashboardDB')
-  .then(() => console.log('MongoDB connected'))
+  .then(() => {console.log('MongoDB connected');main();})
   .catch(err => console.log(err));
 
 //Middleware
@@ -45,19 +72,19 @@ fastify.register(fastifyCors, {
   origin: '*',
 });
 
+
 //Authenticating jwt
 fastify.register(fastifyJwt, {
   secret: process.env.JWT_SECRET, 
 });
 
 //viewing the engine
-fastify.register(require('@fastify/view'), {
+fastify.register(fastifyView, {
   engine: {
-    ejs: ejs,
-  },
-  root: path.join(__dirname, 'views'),
-  layout: 'layout.ejs',
-    });
+    ejs: require("ejs")
+  }
+})
+
 fastify.register(require('@fastify/static'), {
   root: path.join(__dirname, 'assets'),
   prefix: '/assets/',
@@ -71,7 +98,7 @@ const renderTemplate = async (req, reply) => {
   try {
     const slug = req.params.slug;
     const company = await Company.findOne({ slug });
-
+    const section = Company.sections;
     if (!company) {
       reply.status(404).send('Not Found');
       return;
@@ -84,9 +111,11 @@ const renderTemplate = async (req, reply) => {
     };
 
     const data = { ...company.toObject(), url: process.env.BASE_URL + req.url };
+    // const data1 = { ...template.toObject(), url: process.env.BASE_URL + req.url };
 
     reply.view('layout.ejs', {
       data,
+      // data1,
       sectionMap,
     });
   } catch (err) {
@@ -202,7 +231,7 @@ fastify.put('/company/:id', { preValidation: [fastify.authenticate] }, async (re
 
 fastify.delete('/company/:id', { preValidation: [fastify.authenticate] }, async (req, reply) => {
   try {
-    const company = await Company.findByIdAndDelete(req.params.id);
+    const company = await Company.findByIdAndDelete(req.params.id);;
     if (!company) {
       reply.status(404).send('Not Found');
       return;
@@ -212,7 +241,19 @@ fastify.delete('/company/:id', { preValidation: [fastify.authenticate] }, async 
     reply.status(500).send(err);
   }
 });
-
+fastify.get('/render/:id',async (req,reply)=>{
+  const company = await Company.findOne({slug:req.params.id}).lean();
+  const data = {
+    sections: company.sections.map(e => ({
+      ...e,
+      temp_location: e.template.category + '/' + e.template.template_name,
+      // Optionally add other properties here
+    })),
+    company: company // Your data to pass to the template
+  };
+  return reply.viewAsync('views/render.ejs',data);
+  // reply.send(data.sections)
+});
 
 const start = async () => {
   try {
